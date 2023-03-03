@@ -27,18 +27,18 @@ def Perplexity(output, target):
 
 class Metric(object):
     def __init__(self):
-        self.metric = {'Loss': (lambda input, output: output['loss'].item()),
-                       'Local-Loss': (lambda input, output: output['loss'].item()),
-                       'Global-Loss': (lambda input, output: output['loss'].item()),
-                       'Accuracy': (lambda input, output: recur(Accuracy, output['score'], input['label'])),
-                       'Local-Accuracy': (lambda input, output: recur(Accuracy, output['score'], input['label'])),
-                       'Global-Accuracy': (lambda input, output: recur(Accuracy, output['score'], input['label'])),
-                       'Perplexity': (lambda input, output: recur(Perplexity, output['score'], input['label'])),
-                       'Local-Perplexity': (lambda input, output: recur(Perplexity, output['score'], input['label'])),
-                       'Global-Perplexity': (lambda input, output: recur(Perplexity, output['score'], input['label']))}
+        self.metric = {'Loss': (lambda input, output, loss: loss.item()),
+                       'Local-Loss': (lambda input, output, loss: loss.item()),
+                       'Global-Loss': (lambda input, output, loss: loss.item()),
+                       'Accuracy': (lambda input, output, loss: recur(Accuracy, output, input['label'])),
+                       'Local-Accuracy': (lambda input, output, loss: recur(Accuracy, output, input['label'])),
+                       'Global-Accuracy': (lambda input, output, loss: recur(Accuracy, output, input['label'])),
+                       'Perplexity': (lambda input, output, loss: recur(Perplexity, output, input['label'])),
+                       'Local-Perplexity': (lambda input, output, loss: recur(Perplexity, output, input['label'])),
+                       'Global-Perplexity': (lambda input, output, loss: recur(Perplexity, output, input['label']))}
 
-    def evaluate(self, metric_names, input, output):
+    def evaluate(self, metric_names, input, output, loss):
         evaluation = {}
         for metric_name in metric_names:
-            evaluation[metric_name] = self.metric[metric_name](input, output)
+            evaluation[metric_name] = self.metric[metric_name](input, output, loss)
         return evaluation

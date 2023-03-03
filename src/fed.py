@@ -102,7 +102,6 @@ class Federation:
         elif 'mobilenetv3' in cfg['model_name']:
             # idx_i = [None for _ in range(len(user_idx))]
             idx = [OrderedDict() for _ in range(len(user_idx))]
-            input = True
             for k, v in self.global_parameters.items():
                 parameter_type = k.split('.')[-1]
                 for m in range(len(user_idx)):
@@ -112,16 +111,15 @@ class Federation:
                             if v.dim() > 1:
                                 input_size = v.size(1)
                                 output_size = v.size(0)
-                                local_input_size = int(np.floor(input_size * scaler_rate))
-                                local_output_size = int(np.floor(output_size * scaler_rate))
-                                if 'conv1' in k or 'conv2' in k:
+                                local_input_size = max(int(np.floor(input_size * scaler_rate)), 1)
+                                local_output_size = max(int(np.floor(output_size * scaler_rate)), 1)
+                                if 'features.0.0' in k:
+                                    input_idx_i_m = torch.arange(input_size, device=v.device)
+                                    output_idx_i_m = torch.arange(output_size, device=v.device)[:local_output_size]
+                                elif 'features' in k:
                                     # if idx_i[m] is None:
                                     #     idx_i[m] = torch.arange(input_size, device=v.device)
-                                    if input:
-                                        input_idx_i_m = torch.arange(input_size, device=v.device)
-                                        input = False
-                                    else:
-                                        input_idx_i_m = torch.arange(input_size, device=v.device)[:local_input_size]
+                                    input_idx_i_m = torch.arange(input_size, device=v.device)[:local_input_size]
                                     # input_idx_i_m = idx_i[m]
                                     # scaler_rate = self.model_rate[user_idx[m]] / cfg['global_model_rate']
                                     # local_output_size = int(np.ceil(output_size * scaler_rate))
@@ -138,23 +136,30 @@ class Federation:
                                     output_idx_i_m = torch.arange(output_size, device=v.device)[:local_output_size]
                                     # idx_i[m] = output_idx_i_m
                                 else:
-                                    raise ValueError('Not valid k')
+                                    raise ValueError(f'Not valid k: {k}')
                                 idx[m][k] = (output_idx_i_m, input_idx_i_m)
                             else:
                                 input_size = v.size(0)
-                                local_input_size = int(np.floor(input_size * scaler_rate))
+                                local_input_size = max(int(np.floor(input_size * scaler_rate)), 1)
                                 input_idx_i_m = torch.arange(input_size, device=v.device)[:local_input_size]
                                 idx[m][k] = input_idx_i_m
                         else:
                             input_size = v.size(0)
-                            local_input_size = int(np.floor(input_size * scaler_rate))
+                            local_input_size = max(int(np.floor(input_size * scaler_rate)), 1)
                             if 'classifier.3' in k:
                                 input_idx_i_m = torch.arange(input_size, device=v.device)
                                 idx[m][k] = input_idx_i_m
                             else:
                                 input_idx_i_m = torch.arange(input_size, device=v.device)[:local_input_size]
                                 idx[m][k] = input_idx_i_m
-
+                    elif 'running' in parameter_type:
+                        if v.dim() == 1:
+                            input_size = v.size(0)
+                            local_input_size = max(int(np.floor(input_size * scaler_rate)), 1)
+                            input_idx_i_m = torch.arange(input_size, device=v.device)[:local_input_size]
+                            idx[m][k] = input_idx_i_m
+                        else:
+                            raise ValueError(f'Not valid v: {parameter_type}')
                     else:
                         pass
         elif cfg['model_name'] == 'transformer':
@@ -221,7 +226,7 @@ class Federation:
         for k, v in self.global_parameters.items():
             parameter_type = k.split('.')[-1]
             for m in range(len(user_idx)):
-                if 'weight' in parameter_type or 'bias' in parameter_type:
+                if 'weight' in parameter_type or 'bias' in parameter_type or 'running' in parameter_type:
                     if 'weight' in parameter_type:
                         if v.dim() > 1:
                             local_parameters[m][k] = copy.deepcopy(v[torch.meshgrid(param_idx[m][k])])
@@ -313,7 +318,7 @@ class Federation:
                 count[k] = v.new_zeros(v.size(), dtype=torch.float32)
                 tmp_v = v.new_zeros(v.size(), dtype=torch.float32)
                 for m in range(len(local_parameters)):
-                    if 'weight' in parameter_type or 'bias' in parameter_type:
+                    if 'weight' in parameter_type or 'bias' in parameter_type or 'running' in parameter_type:
                         if parameter_type == 'weight':
                             if v.dim() > 1:
                                 if 'classifier.3' in k:

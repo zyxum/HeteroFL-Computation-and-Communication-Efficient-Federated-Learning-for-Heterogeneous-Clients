@@ -1,0 +1,4 @@
+Train CIFAR10 dataset (Non-IID 2 classes) with ResNet model, 10 users, active rate 0.1, model split 'Dynamic', 
+model split mode 'a-b-c (uniform)', GroupNorm, Scaler (False) , Masked CrossEntropy (False)
+
+python train_classifier_fed.py --data_name CIFAR10 --model_name mobilenetv3 --control_name 1_100_0.1_iid-2_dynamic_a1-b1-c1_gn_0_0

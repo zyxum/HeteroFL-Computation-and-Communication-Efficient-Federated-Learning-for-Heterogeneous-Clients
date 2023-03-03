@@ -1,6 +1,8 @@
 from fedscale.core.model_manager import SuperModel
 from argparse import Namespace
 from copy import deepcopy
+from thop import profile
+import torch
 
 
 def get_model(model, shrink_rate):
@@ -15,6 +17,11 @@ class Architecture:
         self.models = {0: deepcopy(torch_model)}
         for rate in shrink_rates:
             self.models[rate] = get_model(torch_model, rate)
+        print("complete preparing architectures")
+        input = torch.randn(10, 3, 32, 32)
+        for rate in shrink_rates:
+            macs, params = profile(self.models[rate], inputs=(input,), verbose=False)
+            print(f"shrink rate: {rate}, macs: {macs}")
 
     def get_model(self, rate):
         return self.models[rate]

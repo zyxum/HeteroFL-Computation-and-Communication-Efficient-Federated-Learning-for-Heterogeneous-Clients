@@ -16,6 +16,8 @@ from utils import save, to_device, process_control, process_dataset, make_optimi
 from logger import Logger
 import pickle
 from architecture import Architecture
+import torch.nn.functional as F
+import logging
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 cudnn.benchmark = True
@@ -60,6 +62,7 @@ def runExperiment():
 
     shrink_rates = [float(cfg['model_split_rate'][label]) for label in cfg['model_split_rate']]
     archs = Architecture(model, shrink_rates)
+    model.to(cfg["device"])
 
     optimizer = make_optimizer(model, cfg['lr'])
     scheduler = make_scheduler(optimizer)
@@ -83,7 +86,7 @@ def runExperiment():
     for epoch in range(last_epoch, cfg['num_epochs']['global'] + 1):
         logger.safe(True)
         train(dataset['train'], data_split['train'], label_split, federation, archs, model, optimizer, logger, epoch)
-        test_model = stats(dataset['train'], model)
+        test_model = stats(dataset['train'], model, archs)
         test(dataset['test'], data_split['test'], label_split, test_model, logger, epoch)
         if cfg['scheduler_name'] == 'ReduceLROnPlateau':
             scheduler.step(metrics=logger.mean['train/{}'.format(cfg['pivot_metric'])])
@@ -101,6 +104,8 @@ def runExperiment():
             shutil.copy('./output/model/{}_checkpoint.pt'.format(cfg['model_tag']),
                         './output/model/{}_best.pt'.format(cfg['model_tag']))
         logger.reset()
+        with open("trained_model.pth.tar", 'wb') as f:
+            pickle.dump(model, f)
     logger.safe(False)
     return
 
@@ -133,17 +138,18 @@ def train(dataset, data_split, label_split, federation, archs, global_model, opt
     return
 
 
-def stats(dataset, model):
+def stats(dataset, model, archs: Architecture):
     with torch.no_grad():
-        test_model = eval('models.{}(model_rate=cfg["global_model_rate"], track=True).to(cfg["device"])'
-                          .format(cfg['model_name']))
+        # test_model = eval('models.{}(model_rate=cfg["global_model_rate"], track=True).to(cfg["device"])'
+        #                   .format(cfg['model_name']))
+        test_model = archs.get_model(cfg["global_model_rate"]).to(cfg["device"])
         test_model.load_state_dict(model.state_dict(), strict=False)
         data_loader = make_data_loader({'train': dataset})['train']
         test_model.train(True)
         for i, input in enumerate(data_loader):
             input = collate(input)
             input = to_device(input, cfg['device'])
-            test_model(input)
+            test_model(input['img'])
     return test_model
 
 
@@ -158,23 +164,28 @@ def test(dataset, data_split, label_split, model, logger, epoch):
                 input_size = input['img'].size(0)
                 input['label_split'] = torch.tensor(label_split[m])
                 input = to_device(input, cfg['device'])
-                output = model(input)
-                output['loss'] = output['loss'].mean() if cfg['world_size'] > 1 else output['loss']
-                evaluation = metric.evaluate(cfg['metric_name']['test']['Local'], input, output)
+                output = model(input['img'])
+                # output['loss'] = output['loss'].mean() if cfg['world_size'] > 1 else output['loss']
+                loss = F.cross_entropy(output, input['label'])
+                loss = loss.mean() if cfg['world_size'] > 1 else loss
+                evaluation = metric.evaluate(cfg['metric_name']['test']['Local'], input, output,loss)
                 logger.append(evaluation, 'test', input_size)
         data_loader = make_data_loader({'test': dataset})['test']
         for i, input in enumerate(data_loader):
             input = collate(input)
             input_size = input['img'].size(0)
             input = to_device(input, cfg['device'])
-            output = model(input)
-            output['loss'] = output['loss'].mean() if cfg['world_size'] > 1 else output['loss']
-            evaluation = metric.evaluate(cfg['metric_name']['test']['Global'], input, output)
+            output = model(input['img'])
+            loss = F.cross_entropy(output, input['label'])
+            # output['loss'] = output['loss'].mean() if cfg['world_size'] > 1 else output['loss']
+            loss = loss.mean() if cfg['world_size'] > 1 else loss
+            evaluation = metric.evaluate(cfg['metric_name']['test']['Global'], input, output, loss)
             logger.append(evaluation, 'test', input_size)
         info = {'info': ['Model: {}'.format(cfg['model_tag']),
                          'Test Epoch: {}({:.0f}%)'.format(epoch, 100.)]}
         logger.append(info, 'test', mean=False)
         logger.write('test', cfg['metric_name']['test']['Local'] + cfg['metric_name']['test']['Global'])
+        logging.info(f'test accuracy f{metric.metric["Accuracy"]}')
     return
 
 
@@ -200,7 +211,7 @@ class Local:
     def train(self, local_parameters, lr, logger):
         metric = Metric()
         # model = eval('models.{}(model_rate=self.model_rate).to(cfg["device"])'.format(cfg['model_name']))
-        model = self.archs.get_model(float(self.model_rate))
+        model = self.archs.get_model(float(self.model_rate)).to(cfg['device'])
         model.load_state_dict(local_parameters)
         model.train(True)
         optimizer = make_optimizer(model, lr)
@@ -211,12 +222,15 @@ class Local:
                 input['label_split'] = torch.tensor(self.label_split)
                 input = to_device(input, cfg['device'])
                 optimizer.zero_grad()
-                output = model(input)
-                output['loss'].backward()
+                output = model(input['img'])
+                # output['loss'].backward()
+                loss = F.cross_entropy(output, input['label'])
+                loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
                 optimizer.step()
-                evaluation = metric.evaluate(cfg['metric_name']['train']['Local'], input, output)
+                evaluation = metric.evaluate(cfg['metric_name']['train']['Local'], input, output, loss)
                 logger.append(evaluation, 'train', n=input_size)
+        logging.info(f"local training loss {loss}")
         local_parameters = model.state_dict()
         return local_parameters
 
